@@ -211,6 +211,106 @@ class TestPeTTaChainer(unittest.TestCase):
         self.assertIn("conjunction e_paint e_agent", present[0])
         self.assertTrue(past)
 
+    def test_root_conjunction_of_derivations_sharing_a_stored_premise(self):
+        # Two rules each derive one atom from the same stored atom. Each derived
+        # atom is provable alone, and so must be their conjunction: the frontier
+        # used to reject the second conjunct because its evidence overlaps the
+        # first's. The conjunction carries both derivations and the AndFormula
+        # fold of their truth values.
+        handler = PeTTaChainer()
+        for statement in [
+            "(: exp_member (Implication (MnEvAgThPast $C $v $x1 $x2) (Member $C $v)) (STV 1.0 0.99))",
+            "(: exp_theme (Implication (MnEvAgThPast $C $v $x1 $x2) (Theme $C $x2)) (STV 1.0 0.99))",
+            "(: s1 (MnEvAgThPast e0 buy x1 x0) (STV 1.0 0.99))",
+        ]:
+            handler.add_atom(statement)
+
+        def ask(pattern):
+            return handler.query(f"(: $prf {pattern} $tv)", steps=400, timeout_sec=0)
+
+        def tv(proof):
+            return proof[proof.rindex("(STV "):-1]
+
+        member = ask("(Member e0 buy)")
+        theme = ask("(Theme e0 x0)")
+        self.assertEqual(len(member), 1)
+        self.assertEqual(len(theme), 1)
+        self.assertIn("(by exp_member s1) (Member e0 buy)", member[0])
+        self.assertIn("(by exp_theme s1) (Theme e0 x0)", theme[0])
+
+        cases = [
+            ("(And (Member e0 buy) (Theme e0 x0))", member, theme),
+            ("(And (Theme e0 x0) (Member e0 buy))", theme, member),
+            ("(And (Member $e buy) (Theme $e $x))", member, theme),
+            ("(And (Member $e $v) (Theme $e $x))", member, theme),
+        ]
+        for pattern, first, second in cases:
+            with self.subTest(pattern=pattern):
+                proofs = ask(pattern)
+                self.assertEqual(len(proofs), 1)
+                self.assertIn("(Member e0 buy)", proofs[0])
+                self.assertIn("(Theme e0 x0)", proofs[0])
+                self.assertIn("(by exp_member s1)", proofs[0])
+                self.assertIn("(by exp_theme s1)", proofs[0])
+                self.assertEqual(
+                    tv(proofs[0]),
+                    handler.evaluate_query(
+                        f"(AndFormula {tv(first[0])} {tv(second[0])})"
+                    ),
+                )
+
+        # x1 is the agent slot, not the theme: no conjunction may bind it.
+        self.assertEqual(ask("(And (Member e0 buy) (Theme e0 x1))"), [])
+
+    def test_root_conjunction_reusing_a_premise_of_a_derived_conjunct(self):
+        handler = PeTTaChainer()
+        for statement in [
+            "(: role_tp (Implication (And (Member $e cancel) (Theme $e $x)) (Patient $e $x)) (STV 1.0 0.9))",
+            "(: f1 (Member c1 cancel) (STV 1.0 0.99))",
+            "(: f2 (Theme c1 f1_flight) (STV 1.0 0.99))",
+        ]:
+            handler.add_atom(statement)
+
+        proofs = handler.query(
+            "(: $prf (And (Member $e cancel) (Patient $e $x)) $tv)",
+            steps=300,
+            timeout_sec=0,
+        )
+
+        self.assertEqual(len(proofs), 1)
+        self.assertIn("(conjunction f1 (by role_tp (conjunction f1 f2)))", proofs[0])
+        self.assertIn("(And (Member c1 cancel) (Patient c1 f1_flight))", proofs[0])
+
+    def test_root_conjunction_joins_attributes_derived_from_one_premise(self):
+        # Day and Month of a relative time are both derived through the same
+        # (BeforeBy ...) fact; joining them through Time must bind.
+        handler = PeTTaChainer()
+        for statement in [
+            "(: t1_time (Time sk_bake_1 sk_time_1) (STV 1.0 0.99))",
+            "(: t1_beforeby (BeforeBy sk_time_1 sk_now_1 1 day) (STV 1.0 0.99))",
+            "(: now_day (Day sk_now_1 18) (STV 1.0 0.99))",
+            "(: now_month (Month sk_now_1 october) (STV 1.0 0.99))",
+            "(: days_before_day (Implication (And (BeforeBy $t $a $n day) (Day $a $d) "
+            "(Compute - ($d $n) -> $e)) (Day $t $e)) (STV 1.0 0.99))",
+            "(: days_before_month (Implication (And (BeforeBy $t $a $n day) (Month $a $m)) "
+            "(Month $t $m)) (STV 1.0 0.9))",
+        ]:
+            handler.add_atom(statement)
+
+        proofs = handler.query(
+            "(: $prf (And (Time sk_bake_1 $t) (Day $t $d) (Month $t $m)) $tv)",
+            steps=400,
+            timeout_sec=0,
+        )
+
+        self.assertEqual(len(proofs), 1)
+        self.assertIn(
+            "(And (Time sk_bake_1 sk_time_1) (Day sk_time_1 17) (Month sk_time_1 october))",
+            proofs[0],
+        )
+        self.assertIn("(by days_before_day ", proofs[0])
+        self.assertIn("(by days_before_month (conjunction t1_beforeby now_month))", proofs[0])
+
     def test_map_dist_lambda_survives_python_validation_and_compilation(self):
         handler = PeTTaChainer()
         handler.add_atom(

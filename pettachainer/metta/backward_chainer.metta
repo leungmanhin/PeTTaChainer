@@ -796,6 +796,126 @@
             (shared-evidence-frontier-proof? $proof))
          ($_other false)))))
 
+;; --- Root conjunctions over derivations that share stored support -----------
+;; Everywhere else the overlap guard keeps AndFormula from combining premises
+;; that share stored support, because the combined TV is consumed further: a
+;; rule application or a nested compound feeds it into later formulas, revision
+;; and lifting-merge rely on each fact leaf occurring once per proof, and
+;; recursive rules rely on the guard to stop a fact from pairing with itself or
+;; with conclusions derived from it. A query's own top-level conjunction is the
+;; exception: nothing consumes its TV, so rejecting a premise proof there only
+;; hides a provable conjunction -- two atoms derived by different rules from one
+;; stored atom, or a stored atom conjoined with a conclusion derived from it.
+;; Such a root conjunction admits the overlapping premise proof; its TV is the
+;; AndFormula fold of the conjuncts' TVs, i.e. the shared support is counted
+;; once per conjunct. The admission covers stored facts, rule applications and
+;; merges of those. Projections keep the rejection -- pooling owns them, and a
+;; strict projection carries the other conjuncts as evidence -- and so does a
+;; conjunct proving the same statement as an overlapping one (A and A).
+(: root-conjunction-type? (-[det]-> $type Bool))
+(= (root-conjunction-type? $type)
+   (if (is-expr $type)
+      (if (== $type ()) false
+         (let $head (car-atom $type)
+            (if (is-var $head) false (== $head And))))
+      false))
+
+;; The query compiler introduces a conjunction directly, (conjunction p ...),
+;; or through its temporary query-compound implication when a conjunct needs
+;; lowering (Compute, Not, nested compounds).
+(: conjunction-introduction-proof? (-[det]-> $proof Bool))
+(: query-compound-introduction-args? (-[det]-> $arguments Bool))
+(= (conjunction-introduction-proof? $proof)
+   (if (is-expr $proof)
+      (if (== $proof ()) false
+         (let $head (car-atom $proof)
+            (if (is-var $head) false
+               (if (== $head conjunction) true
+                  (if (== $head by)
+                     (query-compound-introduction-args? (cdr-atom $proof))
+                     false)))))
+      false))
+(= (query-compound-introduction-args? $args)
+   (if (== $args ()) false
+      (let $rule (car-atom $args)
+         (if (is-var $rule) false
+            (if (== $rule query-compound)
+               (let $rest (cdr-atom $args)
+                  (if (== $rest ()) false
+                     (conjunction-introduction-proof? (car-atom $rest))))
+               false)))))
+
+(: root-conjunction-frontier? (-[semidet]-> Number AndBundle Bool))
+(= (root-conjunction-frontier? $parent-gid $bundle)
+   (let (stored-goal-row $_gid $depth $_goal $_expanded $_pending)
+      (goal-by-id $parent-gid)
+      (if (== $depth 0)
+         (let $goal (and-bundle-goal $bundle)
+            (case $goal (
+               (($type $_kb $proof $_tv)
+                  (if (root-conjunction-type? $type)
+                     (conjunction-introduction-proof? $proof)
+                     false))
+               ($_other false))))
+         false)))
+
+;; A stored fact or a rule application, or a merged representative of such
+;; proofs -- not an aggregate, and not a (marginal or strict) projection of a
+;; bundle anywhere in a merge.
+(: shared-premise-plain-term? (-[det]-> $term Bool))
+(= (shared-premise-plain-term? $term)
+   (case $term (
+      (($_type $_kb $prf $_tv)
+         (== (projection-proof-key (brand Proof $prf)) no-projection-key))
+      ($_other false))))
+
+(: shared-premise-plain-proof? (-[semidet]-> Number Bool))
+(: shared-premise-plain-proofs? (-[semidet]-> (List Number) Bool))
+(= (shared-premise-plain-proof? $pid)
+   (let $kind (proof-kind-by-id $pid)
+      (case $kind (
+         ((leaf $term) (shared-premise-plain-term? $term))
+         ((rule $term) (shared-premise-plain-term? $term))
+         ((merged $_output)
+            (shared-premise-plain-proofs? (proof-children-by-id $pid)))
+         ($_other false)))))
+(= (shared-premise-plain-proofs? ()) true)
+(= (shared-premise-plain-proofs? (cons $pid $rest))
+   (if (shared-premise-plain-proof? $pid)
+      (shared-premise-plain-proofs? $rest)
+      false))
+
+;; Every consumed premise proof that shares fact support with the new one must
+;; be plain too, and must prove a different statement.
+(: shared-premise-compatible-step
+   (-[semidet]-> Number (List Evidence) Bool Number Bool))
+(= (shared-premise-compatible-step $pid $facts $acc $other)
+   (if $acc
+      (let ($_score $other-ev) (proof-stats-by-id $other)
+         (if (== (evidence-intersection (fact-evidence-only $other-ev) $facts) ())
+            true
+            (if (shared-premise-plain-proof? $other)
+               (if (=alpha
+                      (proof-output-key-by-id $other)
+                      (proof-output-key-by-id $pid))
+                  false
+                  true)
+               false)))
+      false))
+
+(: root-conjunction-admits-shared-premise?
+   (-[semidet]-> Number AndBundle (List Number) Number (List Evidence) Bool))
+(= (root-conjunction-admits-shared-premise? $parent-gid $bundle $rev-pids $pid $pev)
+   (if (root-conjunction-frontier? $parent-gid $bundle)
+      (if (shared-premise-plain-proof? $pid)
+         (let $facts (fact-evidence-only $pev)
+            (proof-fold-flat-semidet
+               (shared-premise-compatible-step $pid $facts)
+               true
+               $rev-pids))
+         false)
+      false))
+
 (: frontier-needs-raw-proofs? (-[det]-> AndBundle Bool))
 (= (frontier-needs-raw-proofs? $bundle)
    (let $goal (and-bundle-goal $bundle)
@@ -818,7 +938,12 @@
           ($overlap
              (if (frontier-allows-shared-evidence? $bundle)
                 false
-                (premise-evidence-overlap? $seen $pev))))
+                (if (premise-evidence-overlap? $seen $pev)
+                   (if (root-conjunction-admits-shared-premise?
+                          $parent-gid $bundle $rev-pids $pid $pev)
+                      false
+                      true)
+                   false))))
          (if (frontier-pool-join? $part $parts $seen $pev)
             (frontier-advance-pooled-heap $agenda $parent-gid $bundle $score $seen $parts $rev-pids
                $pid $pev $part)
