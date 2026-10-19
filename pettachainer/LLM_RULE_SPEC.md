@@ -34,6 +34,25 @@ unchanged confidence. This lets population/base-rate folds count both positive
 and negative observations. `Not` remains available normally in rule premises,
 rule conclusions, and queries.
 
+## Truth-value Bands in Queries
+
+A vague quantity or polarity in a question asks for a band of the truth value.
+Put `(Band lo hi)` in the strength or confidence slot of the query's STV, or in
+both; bounds are inclusive:
+
+```metta
+(: $prf (Inheritance $x swim) (STV (Band 0.05 0.3) $c))   ; who rarely swims?
+(: $prf (Inheritance $x swim) (STV (Band 0.6 0.9) $c))    ; who often swims?
+(: $prf (Inheritance $x swim) (STV (Band 0.0 0.05) $c))   ; who can't swim?
+(: $prf (Claim $x) (STV $s (Band 0.0 0.5)))               ; which claims are doubtful?
+```
+
+The band applies to the truth value each answer is returned with: the belief
+after revision, a derived or conjoined truth value, a reading marginal. Prefer
+it to an exact `(STV 0.0 $c)`, which matches only proofs at exactly 0. Use a
+band only in a query's STV slots: never in a statement, a `CTV`, or as the
+whole truth value.
+
 ## Multiple Readings
 
 When an item has several live readings and nothing selects one, assert the

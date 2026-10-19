@@ -38,6 +38,83 @@
       (externalize-proof-structure $result)
       (externalize-results $rest)))
 
+;; --- Truth-value bands -------------------------------------------------------
+;; `(Band lo hi)` in the strength or confidence slot of a query's STV, or in
+;; both, asks for the answers whose returned TV holds that number in [lo, hi],
+;; bounds inclusive. The band takes no part in the search: the query compiles
+;; with a fresh variable in its place, exactly as `(STV $s $c)` does, and an
+;; answer is kept when the TV the query returns for it -- the belief merged by
+;; revision, a derivation's computed TV, a reading marginal -- lies in every
+;; band. An exact number in a slot instead pins the proofs the search matches,
+;; before they merge. Asked of an implication, the STV reads the CTV's positive
+;; branch, as the search reads it. `Band` is query syntax, not a stored value,
+;; so it has no declared type; the bounds are checked where they are compared.
+
+(: band-free-slot (-[det]-> Atom Atom))
+(= (band-free-slot $slot)
+   (if (is-var $slot) $slot
+      (case $slot (
+         ((Band $_lo $_hi) $searched)
+         ($_exact $slot)))))
+
+(: band-free-query (-[det]-> AnnotatedStatement AnnotatedStatement))
+(= (band-free-query $stmt)
+   (case $stmt (
+      ((Interpretation $tag $inner)
+         (Interpretation $tag (band-free-query $inner)))
+      ((: $prf $type $tv)
+         (if (is-var $tv) $stmt
+            (case $tv (
+               ((STV $s $c)
+                  (: $prf $type
+                     (STV (band-free-slot $s) (band-free-slot $c))))
+               ($_unbanded $stmt))))))))
+
+(: slot-in-band? (-[det]-> Atom Number Bool))
+(= (slot-in-band? $slot $value)
+   (if (is-var $slot) true
+      (case $slot (
+         ((Band $lo $hi)
+            (if (<= (the Number $lo) $value)
+               (<= $value (the Number $hi))
+               false))
+         ($_exact true)))))
+
+;; Whether a returned TV lies in the bands of a query's TV pattern. An STV
+;; query's answers carry STVs, or CTVs when it asks an implication.
+(: tv-in-bands? (-[det]-> $pattern TV Bool))
+(= (tv-in-bands? $query-tv $tv)
+   (if (is-var $query-tv) true
+      (case $query-tv (
+         ((STV $s-slot $c-slot)
+            (case $tv (
+               ((STV $s $c)
+                  (if (slot-in-band? $s-slot $s)
+                     (slot-in-band? $c-slot $c)
+                     false))
+               ((CTV $pos $_neg) (tv-in-bands? $query-tv $pos))
+               ($_other false))))
+         ($_unbanded true)))))
+
+(: statement-tv (-[det]-> AnnotatedStatement TV))
+(= (statement-tv (: $_prf $_type $tv)) $tv)
+(= (statement-tv (Interpretation $_tag $stmt)) (statement-tv $stmt))
+
+(: keep-in-band-answer
+   (-[det]-> $pattern AnnotatedStatement (List AnnotatedStatement)
+       (List AnnotatedStatement)))
+(= (keep-in-band-answer $query-tv $answer $kept)
+   (if (tv-in-bands? $query-tv (statement-tv $answer))
+      (cons $answer $kept)
+      $kept))
+
+;; The answers whose TV lies in the bands of the query's TV pattern, in order.
+;; A banded pattern is no TV value, so its type is left open.
+(: in-band-answers
+   (-[det]-> $pattern (List AnnotatedStatement) (List AnnotatedStatement)))
+(= (in-band-answers $query-tv $answers)
+   (foldr-flat (keep-in-band-answer $query-tv) () $answers))
+
 (: IndexedQuery Type)
 (: indexed-query (-[det]-> Number AnnotatedStatement IndexedQuery))
 (: IndexedCompiledQuery Type)
@@ -81,7 +158,7 @@
    (-[nondet]-> KB IndexedQuery (List IndexedCompiledQuery)))
 (= (compile-indexed-query $kb (indexed-query $index $statement))
    (let*
-      (($statement-copy (copy_term $statement))
+      (($statement-copy (copy_term (band-free-query $statement)))
        ($materialized
           (the AnnotatedStatement
              (materialize-stmt-lambdas $statement-copy)))
@@ -274,7 +351,7 @@
    (let*
       (($stmt1
           (the AnnotatedStatement
-             (materialize-stmt-lambdas (copy_term $stmt))))
+             (materialize-stmt-lambdas (copy_term (band-free-query $stmt)))))
        ($compiled-queries
           (map-flat (retarget-compiled-query $kb $tag)
              (collapse (mm2compileQuery $kb $stmt1)))))
@@ -304,23 +381,25 @@
    (-[nondet]-> Number KB Bool AnnotatedStatement
        (List AnnotatedStatement)))
 (= (reading-aware-query $steps $kb $materialize? $stmt)
-   (case $stmt (
-      ((Interpretation $tag $inner)
-         (query-readings-results $steps $kb $materialize? $inner
-            (tag-readings $kb $tag)))
-      ($_plain
-         (let*
-            (($main
-                (query-world-results
-                   $steps $kb $materialize? $stmt no-reading))
-             ($readings (kb-readings $kb)))
-            (if (== $readings ()) $main
-               (append-annotated-statements $main
-                  (reading-marginal-results
-                     (live-reading-count $readings)
-                     $main
-                     (query-readings-results
-                        $steps $kb $materialize? $stmt $readings)))))))))
+   (in-band-answers (statement-tv $stmt)
+      (case $stmt (
+         ((Interpretation $tag $inner)
+            (query-readings-results $steps $kb $materialize? $inner
+               (tag-readings $kb $tag)))
+         ($_plain
+            (let*
+               (($main
+                   (query-world-results
+                      $steps $kb $materialize? $stmt no-reading))
+                ($readings (kb-readings $kb)))
+               (if (== $readings ()) $main
+                  (append-annotated-statements $main
+                     (reading-marginal-results
+                        (live-reading-count $readings)
+                        $main
+                        (query-readings-results
+                           $steps $kb $materialize? $stmt
+                           $readings))))))))))
 
 ;; Batches run one shared arena per world. Plain roots run in MAIN and, for
 ;; their marginals, in every live reading; a reading-scoped root runs in its
@@ -394,10 +473,12 @@
    (-[det]-> Number AnnotatedStatement QueryBatchResult))
 (= (query-answer-row $index $answer) (query-result $index $answer))
 
+;; Rows of one root's compiled query, kept by the bands of that root's TV.
 (: indexed-answers-rows
-   (-[nondet]-> IndexedAnswers (List QueryBatchResult)))
-(= (indexed-answers-rows (indexed-answers $index $answers))
-   (map-flat (query-answer-row $index) $answers))
+   (-[nondet]-> (List TV) IndexedAnswers (List QueryBatchResult)))
+(= (indexed-answers-rows $query-tvs (indexed-answers $index $answers))
+   (map-flat (query-answer-row $index)
+      (in-band-answers (index-atom $query-tvs $index) $answers)))
 
 (: indexed-query-rows
    (-[det]-> (List ReadingTag) (List IndexedAnswers) (List IndexedAnswers)
@@ -405,9 +486,10 @@
 (= (indexed-query-rows $readings $main-answers $reading-answers
       (indexed-query $index $stmt))
    (map-flat (query-answer-row $index)
-      (root-answers $readings (reading-root? $stmt)
-         (fold-flat (index-answers $index) () $main-answers)
-         (fold-flat (index-answers $index) () $reading-answers))))
+      (in-band-answers (statement-tv $stmt)
+         (root-answers $readings (reading-root? $stmt)
+            (fold-flat (index-answers $index) () $main-answers)
+            (fold-flat (index-answers $index) () $reading-answers)))))
 
 (: query-many-mode
    (-[nondet]-> Number KB (List AnnotatedStatement) Bool
@@ -422,7 +504,9 @@
        ($rows
           (if (== $readings ())
              (foldr-flat append-query-batch-results ()
-                (map-flat indexed-answers-rows $main-answers))
+                (map-flat
+                   (indexed-answers-rows (map-flat statement-tv $statements))
+                   $main-answers))
              (let $reading-answers
                 (foldr-flat append-indexed-answers ()
                    (map-flat

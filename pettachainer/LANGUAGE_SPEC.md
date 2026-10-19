@@ -50,7 +50,8 @@ When you want to emit the current mined implication rules, run:
 !(query steps kb (: $prf type $tv))
 ```
 
-`steps` is the search budget.
+`steps` is the search budget. A query's STV may ask for a band of the truth
+value, `(STV (Band lo hi) $c)`; see Truth-value bands in queries.
 
 - An implication-derived proof uses the explicit application form:
 
@@ -368,6 +369,67 @@ Limits:
   inheritance lifts) are not rederived there, and base-rate folds read MAIN.
 - Query materialization writes MAIN derivations only, so reading answers are
   recomputed by every query.
+
+## Truth-value bands in queries
+
+A vague quantity or a polarity asks for a band of the truth value, not an
+exact value: "who rarely swims?" is a strength in a low band, "who often
+swims?" a high band, "who can't swim?" a strength near 0, and "which claims are
+doubtful?" a low confidence. Write `(Band lo hi)` in the strength or the
+confidence slot of the query's STV, or in both:
+
+```metta
+!(query 100 kb (: $prf (Inheritance $x swim) (STV (Band 0.05 0.3) $c)))  ; rarely
+!(query 100 kb (: $prf (Inheritance $x swim) (STV (Band 0.0 0.05) $c)))  ; can't
+!(query 100 kb (: $prf (Claim $x) (STV $s (Band 0.0 0.5))))              ; doubtful
+!(query 100 kb (: $prf (Claim $x) (STV (Band 0.8 1.0) (Band 0.9 1.0))))  ; both
+```
+
+The query answers what `(STV $s $c)` answers and keeps the answers whose
+returned truth value lies in every band. Bounds are inclusive,
+`lo <= x <= hi`, so `(Band 0.0 0.05)` keeps a strength of exactly 0. Answers
+carry their concrete truth value, never the band, in the order of the unbanded
+query.
+
+The band constrains the truth value the query returns for an answer:
+
+- the current belief, after revision. Two assertions of one statement at
+  `(STV 1.0 0.9)` and `(STV 0.0 0.9)` answer once, at
+  `(STV 0.5 0.9473684210526316)`, which `(Band 0.45 0.55)` keeps and neither
+  `(Band 0.0 0.05)` nor `(Band 0.95 1.0)` does. Derivations of one conclusion
+  are likewise revised together before the band applies;
+- a rule-derived answer's derived truth value;
+- the conjunction's truth value for an `And` query;
+- over a KB with readings, the marginal answer of a plain query, and the
+  in-reading truth value for `(Interpretation r ...)`;
+- for an implication, the positive branch of its CTV, which is what an STV
+  asks of an implication.
+
+An exact number in a slot is different. `(STV 0.0 $c)` pins the proofs the
+search matches before they are revised together: it can return one derivation
+at exactly 0.0 that the merged belief no longer holds, and it misses a
+statement whose revised strength moved off 0, such as 0.04 or 0.25. A band
+takes no part in the search, so it sees the revised belief. A band and a
+number combine: `(STV (Band 0.8 1.0) 0.95)` keeps the answers in the strength
+band among the proofs pinned at confidence 0.95.
+
+Bands are query-only: the statement validator (`check_stmt`, run by the Python
+`add_atom`) requires grounded STV and CTV fields (numbers, not variables,
+symbols or expressions), so a statement whose truth value carries a band is
+rejected before it reaches the KB. `query-many` applies each root's band to
+that root's answers. A materializing query writes the derivations its search
+found, as the unbanded query would; the band selects only the returned
+answers.
+
+Limits:
+
+- A band fills a slot of the query's top-level `STV` only. As the whole truth
+  value, or inside a `CTV` pattern, it is rejected by the query validator
+  (`check_query`).
+- Both bounds are numbers; `check_query` rejects a variable or symbolic bound.
+  A band with `lo > hi` holds no value and answers nothing.
+- A `Compute` premise on a strength bound in the query's truth value does not
+  constrain the answers; use a band.
 
 ## Built-in Premise Forms
 
