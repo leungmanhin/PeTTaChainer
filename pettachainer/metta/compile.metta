@@ -1299,6 +1299,67 @@
       (existing-kb-context $kb)
       (compile-fact-kb-from-id $kb)))
 
+;; Readings. `(Interpretation r (: p S tv))` asserts S under reading r, one of
+;; an item's mutually exclusive readings. Every reading is its own KB context
+;; `(kbid (reading r) Nil)`: its content never enters MAIN, two readings never
+;; revise each other, and context-polymorphic rules apply inside a reading as
+;; they do in MAIN. A goal in a reading context also sees the MAIN facts (see
+;; the backward chainer), so a reading is the shared layer plus its own
+;; statements. The context test never binds: an open context stays open.
+(: reading-ctx (-[det]-> ReadingTag ReadingContext))
+(= (reading-ctx $tag) (brand ReadingContext (quote (reading $tag))))
+
+(: reading-ctx? (-[det]-> $ctx Bool))
+(= (reading-ctx? $ctx)
+   (if (is-expr $ctx)
+      (if (== $ctx ()) false
+         (== (car-atom $ctx) reading))
+      false))
+
+(: reading-context? (-[det]-> $kb Bool))
+(= (reading-context? $kb)
+   (if (is-expr $kb)
+      (if (== $kb ()) false
+         (let $tail (cdr-atom $kb)
+            (if (== $tail ()) false
+               (reading-ctx? (car-atom $tail)))))
+      false))
+
+;; Re-root compiled additions or a compiled query in another context of the
+;; same KB. Every `(kbid MAIN Nil)` becomes `(kbid $ctx Nil)`; with $close-open?
+;; a context-polymorphic `(kbid $c $v)` becomes it as well, so the rules of a
+;; reading-scoped statement apply only inside that reading. Fresh hypothetical
+;; query contexts keep their own identity.
+(: retarget-kb-contexts (-[det]-> KB ReadingContext Bool $term $term))
+(= (retarget-kb-contexts $kbid $ctx $close-open? $term)
+   (if (is-var $term) $term
+      (if (== $term ()) ()
+         (if (is-expr $term)
+            (if (kb-context-term-of? $kbid $term)
+               (let $term-ctx (car-atom (cdr-atom $term))
+                  (if (== $term-ctx MAIN)
+                     (make-kb-context $kbid $ctx Nil)
+                     (if $close-open?
+                        (if (is-var $term-ctx)
+                           (make-kb-context $kbid $ctx Nil)
+                           $term)
+                        $term)))
+               (cons (retarget-kb-contexts $kbid $ctx $close-open? (car-atom $term))
+                  (map-flat (retarget-kb-contexts $kbid $ctx $close-open?)
+                     (cdr-atom $term))))
+            $term))))
+
+;; A KB-context term is the three-element `(kbid ctx vars)` of the given KB.
+(: kb-context-term-of? (-[det]-> KB $term Bool))
+(= (kb-context-term-of? $kbid $term)
+   (if (== (car-atom $term) $kbid)
+      (let $tail (cdr-atom $term)
+         (if (== $tail ()) false
+            (let $rest (cdr-atom $tail)
+               (if (== $rest ()) false
+                  (== (cdr-atom $rest) ())))))
+      false))
+
 ;; Base-rate scans must leave ordinary open expressions intact while replacing
 ;; compiler-generated existential witnesses with query variables. Traverse
 ;; expression nodes, never their list suffixes: matching a suffix against an
@@ -2616,11 +2677,23 @@
 ;; Translate the external `premises |- conclusions` compiler form into the
 ;; single-conclusion `rules` form consumed by MORK. Facts are already
 ;; zero-premise conclusions and therefore need no wrapper.
+;; A reading-scoped statement compiles exactly like the plain statement and is
+;; then re-rooted in its reading's context, rules included.
 (: mm2compile
    (-[nondet]-> KB AnnotatedStatement  RuntimeAddition))
 (= (mm2compile $kb $stmt)
-   (let $compiled (compile_ $kb $stmt)
-      (mm2stmt $compiled)))
+   (case $stmt (
+      ((Interpretation $tag $inner)
+         (if (is-var $tag) (empty)
+            (let $compiled (compile_ $kb $inner)
+               (mm2stmt
+                  (brand CompiledAddition
+                     (retarget-kb-contexts $kb
+                        (reading-ctx (brand ReadingTag $tag)) true
+                        $compiled))))))
+      ($_plain
+         (let $compiled (compile_ $kb $stmt)
+            (mm2stmt $compiled))))))
 
 (: runtime-fact-addition
    (-[det]-> Atom RuntimeAddition))
@@ -3015,14 +3088,18 @@
    (once
       (if (is-expr $kb)
          (if (= $kb ($kbid MAIN Nil)) (: $prf $type $tv)
-            (let*
-                 (($idx (car-atom (cdr-atom $kb)))
-                 ($vars (car-atom (cdr-atom (cdr-atom $kb))))
-                 ($x
-                    (collapse
-                       (match &kb
-                          ($t $kb $_proof $_truth-value)
-                          $t)))
-                 ($ptype (Implication (seq2expr $x) $type)))
-               (: $prf $ptype $tv)))
+            (if (reading-context? $kb)
+               (Interpretation
+                  (car-atom (cdr-atom (car-atom (cdr-atom $kb))))
+                  (: $prf $type $tv))
+               (let*
+                    (($idx (car-atom (cdr-atom $kb)))
+                    ($vars (car-atom (cdr-atom (cdr-atom $kb))))
+                    ($x
+                       (collapse
+                          (match &kb
+                             ($t $kb $_proof $_truth-value)
+                             $t)))
+                    ($ptype (Implication (seq2expr $x) $type)))
+                  (: $prf $ptype $tv))))
          (: $prf $type $tv))))

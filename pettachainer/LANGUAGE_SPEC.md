@@ -304,6 +304,71 @@ corresponding direct `ExistentialClaim` E and calculates the remaining U from
 copying the existential confidence onto U. Both forms are lazy FoldAll-backed
 premises and their bound variables do not escape into the conclusion.
 
+## Readings (Interpretation)
+
+An ambiguous item, such as a sentence with two live readings that nothing
+selects, is stored as its shared statements, asserted normally, plus each
+reading's own statements wrapped in the reading they hold under:
+
+```metta
+!(compileadd kb (: e_ag (Agent see1 speaker1) (STV 1.0 0.99)))
+!(compileadd kb (Interpretation r1 (: e_instr (Instrument see1 telescope1) (STV 1.0 0.99))))
+!(compileadd kb (Interpretation r2 (: m_with (With man1 telescope1) (STV 1.0 0.99))))
+```
+
+`(Interpretation r statement)` asserts the statement under reading `r` only.
+The readings of a KB are mutually exclusive possibilities: the item licenses
+each, never several at once. Do not assert reading content plainly or inside
+one `And`; that claims every reading holds.
+
+Each reading is a world: the KB's plain statements (the shared layer) plus the
+reading's own statements. Rules apply inside a world as they do in MAIN, and a
+wrapped rule applies inside its reading only. Reading content never enters
+MAIN, and two readings never revise each other. A wrapped `(Not S)` is
+canonicalized as in MAIN.
+
+A query takes one of two forms:
+
+- Per reading: `(Interpretation r2 (: $prf (With man1 telescope1) $tv))` is
+  answered inside reading `r2` and returns the wrapped statement with its own
+  truth value, `(Interpretation r2 (: m_with (With man1 telescope1) (STV 1.0 0.99)))`:
+  true under `r2`. Shared content is true under every reading. A variable tag,
+  `(Interpretation $r ...)`, asks every live reading; a tag that no statement
+  carries is not a live reading and returns nothing.
+- Marginal: a plain query is answered in MAIN and, when the KB holds readings,
+  inside every reading. An answer MAIN does not give keeps its in-reading
+  strength, and its confidence is shared out over the readings: `c' = sum(c) / n`,
+  summed over the readings that give the answer at that strength, where `n` is
+  the number of live readings (a uniform reading prior; at least two, since only
+  an ambiguous item carries readings). The proof names the supporting readings:
+
+```metta
+!(query 100 kb (: $prf (With man1 telescope1) $tv))
+; (: (readings (r2 m_with)) (With man1 telescope1) (STV 1.0 0.495))
+```
+
+Content held by every reading keeps its confidence. Readings that disagree on a
+strength stay separate answers: strength 0 under `r1` and 1 under `r2` give two
+answers at half confidence each, never a revised mid-band strength. A
+conjunction is answered inside each reading, so it binds only where one reading
+holds every conjunct; the contents of different readings are never joined.
+
+`query-many` accepts both forms in one batch; MAIN and each reading run their
+own shared arena with the full step budget.
+
+Limits:
+
+- A KB holds one ambiguous item: its reading tags are that item's readings.
+  Keep separately ambiguous items in separate KBs.
+- Marginals are produced for STV answers; other answers are available per
+  reading only.
+- A statement MAIN answers is answered by MAIN alone.
+- Inside a reading, the shared layer is MAIN's stored facts and the rules.
+  Views compiled for MAIN only (projections of shared compound facts,
+  inheritance lifts) are not rederived there, and base-rate folds read MAIN.
+- Query materialization writes MAIN derivations only, so reading answers are
+  recomputed by every query.
+
 ## Built-in Premise Forms
 
 ### 1) Plain predicates

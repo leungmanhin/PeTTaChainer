@@ -28,8 +28,30 @@ class TestPlnValidator(unittest.TestCase):
             with self.subTest(stmt=stmt):
                 self.assertEqual(check_stmt(stmt), 0.0)
 
+    def test_check_stmt_accepts_reading_scoped_statements(self):
+        for stmt in (
+            "(Interpretation r2 (: m_with (With man telescope) (STV 1.0 0.99)))",
+            "(Interpretation r1 (: r (Implication (Dog $x) (Animal $x)) (CTV (STV 0.9 0.8) (STV 0.1 0.7))))",
+        ):
+            with self.subTest(stmt=stmt):
+                self.assertEqual(check_stmt(stmt), 1.0)
+        for stmt in (
+            "(Interpretation $r (: m_with (With man telescope) (STV 1.0 0.99)))",
+            "(Interpretation (r 2) (: m_with (With man telescope) (STV 1.0 0.99)))",
+            "(Interpretation r2 (: $prf (With man telescope) (STV 1.0 0.99)))",
+            "(Interpretation r2 (: m_with (With man telescope) (CustomTV 0.9)))",
+            "(Interpretation r2 m_with)",
+        ):
+            with self.subTest(stmt=stmt):
+                self.assertEqual(check_stmt(stmt), 0.0)
+
     def test_check_query_accepts_inner_form(self):
         self.assertEqual(check_query("(: $prf (Dog fido) $tv)"), 1.0)
+
+    def test_check_query_accepts_reading_scoped_queries(self):
+        self.assertEqual(check_query("(Interpretation r2 (: $prf (Dog fido) $tv))"), 1.0)
+        self.assertEqual(check_query("(Interpretation $r (: $prf (Dog fido) $tv))"), 1.0)
+        self.assertEqual(check_query("(Interpretation r2 (: proof1 (Dog fido) $tv))"), 0.0)
 
     def test_check_query_rejects_invalid_forms(self):
         for query in (

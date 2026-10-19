@@ -81,26 +81,29 @@
    (-[nondet]-> CompiledAddition  (| Bool (List $none))))
 (= (record-compiled-inheritance-subject! $expr)
    (case $expr (
-      ((: ($kbid $_ctx $_vars) $_prf (Inheritance $subj $_concept) $_tv)
+      ((: ($kbid $ctx $_vars) $_prf (Inheritance $subj $_concept) $_tv)
          (if (is-var $subj) ()
-            (let $row
-               (make-space-pair $kbid $subj)
-               (add-space-atom! &inheritance_subject $row))))
+            (if (reading-ctx? $ctx) ()
+               (let $row
+                  (make-space-pair $kbid $subj)
+                  (add-space-atom! &inheritance_subject $row)))))
       ($_other ()))))
 
 (: record-compiled-inheritance-concepts!
    (-[nondet]-> CompiledAddition  (| Bool (List $none))))
 (= (record-compiled-inheritance-concepts! $expr)
    (case $expr (
-      ((: ($kbid $_ctx $_vars) $_prf (Inheritance $subj $concept) $_tv)
-         (record-inheritance-nodes!
-            (brand KB $kbid)
-            (brand Statement $subj)
-            (brand Statement $concept)))
-      ((: ($kbid $_ctx $_vars) $_prf (Member $_obj $class) $_tv)
-         (record-concept-node!
-            (brand KB $kbid)
-            (brand Statement $class)))
+      ((: ($kbid $ctx $_vars) $_prf (Inheritance $subj $concept) $_tv)
+         (if (reading-ctx? $ctx) ()
+            (record-inheritance-nodes!
+               (brand KB $kbid)
+               (brand Statement $subj)
+               (brand Statement $concept))))
+      ((: ($kbid $ctx $_vars) $_prf (Member $_obj $class) $_tv)
+         (if (reading-ctx? $ctx) ()
+            (record-concept-node!
+               (brand KB $kbid)
+               (brand Statement $class))))
       ($_other ()))))
 
 (: materialize-stmt-lambdas (-[nondet]-> $term  $term))
@@ -130,6 +133,11 @@
 (= (compileadd $kb $stmt)
    (let*
       (($stmt1 (materialize-stmt-lambdas $stmt))
+        ($_reading
+           (case $stmt1 (
+              ((Interpretation $tag $_inner)
+                 (if (is-var $tag) () (register-kb-reading! $kb $tag)))
+              ($_plain ()))))
         ($raw-atoms (collapse (mm2compile $kb $stmt1)))
         ($atoms $raw-atoms)
         ($iatoms

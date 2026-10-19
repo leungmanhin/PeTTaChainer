@@ -29,24 +29,41 @@ def _tv_supported_expr(tv_var: str = "$123tv") -> str:
     return expr
 
 
-def _check_shape(expr: str, body: str) -> float:
-    return _run_check(f"!(if (= {expr} (: $123prf $123stmt $123tv)) {body} 0.0)")
+def _check_shape(expr: str, body: str, reading_tag_ok: str) -> float:
+    """Check `(: prf stmt tv)`, bare or wrapped as `(Interpretation tag ...)`."""
+
+    return _run_check(
+        f"!(if (= {expr} (Interpretation $123tag (: $123prf $123stmt $123tv))) "
+        f"(if {reading_tag_ok} {body} 0.0) "
+        f"(if (= {expr} (: $123prf $123stmt $123tv)) {body} 0.0))"
+    )
 
 
 def check_stmt(text: str) -> float:
-    """Return 1.0 for valid evaluated statement forms, else 0.0."""
+    """Return 1.0 for valid evaluated statement forms, else 0.0.
+
+    A statement may be scoped to one reading of an ambiguous item as
+    `(Interpretation r (: prf stmt tv))`; the reading tag must be a symbol.
+    """
 
     return _check_shape(
         text.strip(),
         "(if (== (get-metatype $123prf) Variable) 0.0 "
         f"(if (== (get-metatype $123tv) Variable) 0.0 {_tv_supported_expr()}))",
+        "(== (get-metatype $123tag) Symbol)",
     )
 
 
 def check_query(text: str) -> float:
-    """Return 1.0 for valid evaluated query forms, else 0.0."""
+    """Return 1.0 for valid evaluated query forms, else 0.0.
+
+    `(Interpretation r (: $prf stmt $tv))` asks within reading r; the tag may
+    be a symbol or a variable (every live reading).
+    """
 
     return _check_shape(
         text.strip(),
         "(if (== (get-metatype $123prf) Variable) 1.0 0.0)",
+        "(or (== (get-metatype $123tag) Symbol) "
+        "(== (get-metatype $123tag) Variable))",
     )

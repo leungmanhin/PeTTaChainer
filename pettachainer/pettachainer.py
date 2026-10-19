@@ -54,6 +54,16 @@ def _as_list(value) -> List[str]:
     return [value] if isinstance(value, str) else value
 
 
+def _statement_body(atom: str) -> str:
+    """Return the `(: name ...)` statement, unwrapped from `(Interpretation r ...)`."""
+    text = atom.strip()
+    if text.startswith("(Interpretation "):
+        start = text.find("(:")
+        if start >= 0:
+            return text[start:]
+    return text
+
+
 def _group_query_many_results(rows: List[str], count: int) -> List[List[str]]:
     grouped: List[List[str]] = [[] for _ in range(count)]
     prefix = "(query-result "
@@ -160,15 +170,16 @@ class PeTTaChainer:
         """Remove a previously compiled statement by its name.
 
         Retracts the kb facts and rules that compileadd produced for
-        ``(: <atom_name> ...)``, including their index rows and cached
-        expected scores. Statements whose compiled rules carry no
-        extractable name (e.g. negated outputs) are not covered.
+        ``(: <atom_name> ...)``, bare or inside an ``(Interpretation r ...)``
+        reading, including their index rows and cached expected scores.
+        Statements whose compiled rules carry no extractable name (e.g.
+        negated outputs) are not covered.
         """
         result = self.handler.process_metta_string(f"!(remove-compiled-statement {atom_name})")
         prefix = f"(: {atom_name} "
         self._added_atoms = [
             (atom, mined) for atom, mined in self._added_atoms
-            if not atom.strip().startswith(prefix)
+            if not _statement_body(atom).startswith(prefix)
         ]
         return result
 

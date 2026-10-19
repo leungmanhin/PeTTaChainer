@@ -50,6 +50,22 @@
 (= (kb-context-kbid ($kbid $_ctx $_vars))
    $kbid)
 
+;; The live readings of a KB are the reading tags its statements carry, in
+;; first-seen order. A KB holds one ambiguous item, so they are that item's
+;; mutually exclusive readings.
+(: kb-readings (-[det]-> KB (List ReadingTag)))
+(= (kb-readings $kbid)
+   (collapse (match &kb_reading ($kbid $tag) (brand ReadingTag $tag))))
+
+(: kb-reading? (-[det]-> KB $tag Bool))
+(= (kb-reading? $kbid $tag)
+   (not (== (collapse (once (match &kb_reading ($kbid $tag) true))) ())))
+
+(: register-kb-reading! (-[det]-> KB $tag (| Bool (List $none))))
+(= (register-kb-reading! $kbid $tag)
+   (if (kb-reading? $kbid $tag) ()
+      (add-space-atom! &kb_reading (make-space-pair $kbid $tag))))
+
 (: observed-inheritance-subject? (-[det]-> KB Statement Bool))
 (= (observed-inheritance-subject? $kbid $subj)
    (not (== (collapse (once (match &inheritance_subject ($kbid $subj) true))) ())))

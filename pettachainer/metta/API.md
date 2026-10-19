@@ -18,7 +18,7 @@ usable inside rules; it is not enumerated here.
 
 | Function | Meaning |
 |---|---|
-| `(compileadd $kb $stmt)` | Compile a statement (fact or rule) and add it to KB `$kb`. The primary entry point. |
+| `(compileadd $kb $stmt)` | Compile a statement (fact or rule) and add it to KB `$kb`. The primary entry point. `(Interpretation r $stmt)` adds the statement under reading `r` of the KB's ambiguous item only (see LANGUAGE_SPEC.md, Readings). |
 | `(add-to-kb $expr)` | Add an already-compiled, internal-form atom to the live KB. Lower-level. |
 | `(remove-compiled-statement $name)` | Inverse of `compileadd` for one named statement `(: $name ...)`: retracts its kb facts and rules together with their index rows and cached scores. Use before re-adding a statement under the same name (e.g. a truth-value update); rules whose compiled proof carries no extractable name (negated outputs, open query adapters) are not covered. Python: `PeTTaChainer.remove_statement(name)`. |
 
@@ -30,7 +30,7 @@ update that fact; superseded candidates are discarded rather than accumulated.
 
 | Function | Meaning |
 |---|---|
-| `(query $steps $kb $stmt)` | Backward-chain up to `$steps` to answer `$stmt` against `$kb`; yields the proven results. The expansion budget does not change the beam width. If dependent-proof revision temporarily leaves the root with no live result, its completed incumbent is returned instead. |
+| `(query $steps $kb $stmt)` | Backward-chain up to `$steps` to answer `$stmt` against `$kb`; yields the proven results. The expansion budget does not change the beam width. If dependent-proof revision temporarily leaves the root with no live result, its completed incumbent is returned instead. `(Interpretation r (: $prf type $tv))` asks within reading `r` (every live reading for a variable `r`); a plain query over a KB with readings also returns reading marginals (see LANGUAGE_SPEC.md, Readings). |
 | `(query-materialize $steps $kb $stmt)` | As `query`, but also writes the derived proofs back into the KB. |
 | `(query-many $steps $kb $statements)` | Compile every statement, inject their temporary additions once, and answer all roots in one shared backward-search arena. `$steps` is one total expansion budget. Emits `(query-result $index $answer)` for each answer; unanswered roots emit no row. Python: `PeTTaChainer.query_many(statements, steps)` returns an input-aligned `list[list[str]]`, including empty lists for unanswered roots. |
 | `(query-many-materialize $steps $kb $statements)` | As `query-many`, but materializes the selected representative proof trees for every root. Python: `PeTTaChainer.query_many_materialization(statements, steps)` runs in the caller's live process so the KB writes persist. |

@@ -1241,12 +1241,19 @@
 
 (: leaf-evidence-for-stored-fact
    (-[det]-> Atom Atom Atom Atom (List Evidence)))
+;; A shared fact seen from a reading context keeps the evidence identity of the
+;; MAIN fact it is, so every derivation through it counts it once.
 (= (leaf-evidence-for-stored-fact $type $kb $proof $tv)
    (let $typed-proof (brand Proof $proof)
       (if (assumption-proof? $typed-proof) ()
          (forward-fact-evidence
             (brand Statement $type)
-            (brand KBContext $kb)
+            (brand KBContext
+               (if (reading-context? $kb)
+                  (if (== (collapse (once (match &kb ($type $kb $proof $tv) true))) ())
+                     (make-kb-context (brand KB (car-atom $kb)) MAIN Nil)
+                     $kb)
+                  $kb))
             $typed-proof
             (the TV $tv)))))
 

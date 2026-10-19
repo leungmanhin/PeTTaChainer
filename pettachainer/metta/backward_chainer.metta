@@ -1924,12 +1924,24 @@
        (| Goal (Statement KBContext Proof TV))))
 (= (direct-goal-results-view $steps (CPU $fun $args $_res))
    (CPU $fun $args (reduce (cpu-call $steps $fun $args))))
+;; A goal in a reading context also sees the MAIN facts, so a reading is the
+;; shared layer plus its own statements. The shared fact is answered in the
+;; goal's context, where that reading's rule premises accept it.
 (= (direct-goal-results-view $steps ($type $kb $prf $tv))
-   (match &kb
-      (@ $fact ($type $kb $prf $tv))
-      (if (backward-acyclic-term? $fact)
-         $fact
-         (empty))))
+   (superpose
+      ((match &kb
+          (@ $fact ($type $kb $prf $tv))
+          (if (backward-acyclic-term? $fact)
+             $fact
+             (empty)))
+       (if (reading-context? $kb)
+          (let $main (make-kb-context (brand KB (car-atom $kb)) MAIN Nil)
+             (match &kb
+                (@ $fact ($type $main $prf $tv))
+                (if (backward-acyclic-term? $fact)
+                   (assemble-stored-runtime-fact $type $kb $prf $tv)
+                   (empty))))
+          (empty)))))
 
 (: expand-direct-goal-step
    (-[semidet]-> Number (| Goal (Statement KBContext Proof TV))

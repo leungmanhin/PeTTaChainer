@@ -133,8 +133,14 @@
 (: : (-[det]-> KBContext Proof Statement TV Goal))
 
 ;; Public source statements and query answers omit the runtime KB/context.
+;; `(Interpretation reading statement)` scopes a statement to one of an item's
+;; mutually exclusive readings; it is accepted as a statement and as a query.
 (: AnnotatedStatement Type)
 (: : (-[det]-> Proof Statement TV AnnotatedStatement))
+(: Interpretation (-[det]-> Atom AnnotatedStatement AnnotatedStatement))
+;; The KB context of one reading is `(kbid (reading r) Nil)`.
+(: ReadingTag (Newtype Atom))
+(: ReadingContext (Newtype Atom))
 
 ;; Batch query answers retain their input position and emit one row per
 ;; annotated answer. A root with no answer emits no row.

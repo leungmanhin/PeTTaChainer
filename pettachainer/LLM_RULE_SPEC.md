@@ -34,6 +34,23 @@ unchanged confidence. This lets population/base-rate folds count both positive
 and negative observations. `Not` remains available normally in rule premises,
 rule conclusions, and queries.
 
+## Multiple Readings
+
+When an item has several live readings and nothing selects one, assert the
+statements shared by every reading plainly and wrap each reading-specific
+statement in its reading:
+
+```metta
+(Interpretation r1 (: e_instr (Instrument see1 telescope1) (STV 1.0 0.99)))
+(Interpretation r2 (: m_with (With man1 telescope1) (STV 1.0 0.99)))
+```
+
+Never assert reading content plainly or conjoin the readings. Ask within one
+reading with `(Interpretation r2 (: $prf (With man1 telescope1) $tv))`, or
+within every reading with a variable tag. A plain query also answers from the
+readings: the strength is kept and the confidence is divided by the number of
+readings, so `(With man1 telescope1)` above answers at `(STV 1.0 0.495)`.
+
 ## Member and Inheritance
 
 Use `Member` for an object belonging to a class:
