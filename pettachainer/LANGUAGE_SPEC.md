@@ -305,6 +305,75 @@ corresponding direct `ExistentialClaim` E and calculates the remaining U from
 copying the existential confidence onto U. Both forms are lazy FoldAll-backed
 premises and their bound variables do not escape into the conclusion.
 
+### Bound-term conclusions
+
+A premise may bind a variable to a whole term, such as a clause sealed under
+an event's `Theme`. A conclusion may name that term: the variable alone, an
+`And` holding it beside other atoms, or either form under `Not`:
+
+```metta
+!(compileadd kb
+    (: theme_entailed_past
+       (Implication
+          (And (Entails $m) (Theme $m $c) (Past $m)
+               (Compute clause-event ($c) -> $o))
+          (And $c (Past $o)))
+       (CTV (STV 1.0 0.9) (STV 0.0 1.0))))
+```
+
+The term's conjuncts take the variable's place. Given the stored facts
+`(Entails sk_manage_1)`, `(Past sk_manage_1)` and
+
+```metta
+(Theme sk_manage_1
+   (And (Member sk_open_1 open) (Agent sk_open_1 sk_lamine_1)))
+```
+
+the rule concludes
+`(And (Member sk_open_1 open) (Agent sk_open_1 sk_lamine_1) (Past sk_open_1))`.
+Each conjunct is queryable on its own through the marginal projection of an
+`And` conclusion, with a proof such as
+`(marginal-proj 2 (by theme_entailed_past ...))`, and the whole conjunction is
+queryable as one `And`. A one-atom term, `(Theme sk_try_1 (Member sk_sleep_1 sleep))`,
+concludes that atom. `(Not $c)` and `(Not (And $c (Past $o)))` conclude one
+negated conjunction over the spliced conjuncts, `(Not (And a b (Past o)))`, the
+form a denied clause is written in; no conjunct is concluded positively from it.
+
+Compiled as written, a rule concluding a variable would unify with every goal.
+Instead, the first antecedent conjunct that mentions the variable and that a
+stored fact can match (a predicate, not a connective, a computation or a
+binder), here `(Theme $m $c)`, is a specialization trigger, as for a
+specializing predicate (see `metta/API.md`). Each stored fact matching it
+whose term is an expression yields one instance of the rule with the term
+spliced into the conclusion, whether the fact or the rule is added first. An
+instance concludes a concrete conjunction whose projections the conclusion
+index keys by the term's conjuncts, so a goal reaches the rule only through a
+stored term holding a conjunct that unifies with it. Without such a term the
+rule costs a query nothing. A fact binding the variable to a symbol, number or
+string yields no instance.
+
+A `Compute` premise whose arguments the trigger fact grounds is evaluated when
+the instance is compiled and stays a premise that checks its value, so
+`clause-event` (see Compute) writes the clause's event into the conclusion:
+the instance concludes `(Past sk_open_1)`, which only goals about that event
+reach. The other premises are ordinary: `(Entails $m)` may be stored or
+derived, and without it the instance derives nothing. A marker inside a stored
+denied bundle, `(Not (And ... (Entails sk_manage_1) ...))`, is not a stored
+`(Entails sk_manage_1)` fact: the bundle's projection gives it no evidence, so
+nothing positive is derived, and when the bundle also holds the sealed term no
+instance exists at all.
+
+Limits:
+
+- Only stored facts trigger instances. A term bound by a derived fact, such as
+  a sealed clause nested inside another sealed clause, yields none.
+- Projections are MAIN views (see Readings). A sealed term stored under a
+  reading derives the whole conjunction in that reading, and its single
+  conjuncts there only when the rule was added before the fact.
+- A goal open in every argument, such as `(Member $x $y)` from the base-rate
+  fold of an inverted single-premise rule, reaches the instances of every
+  stored term; its search grows with their number.
+
 ## Readings (Interpretation)
 
 An ambiguous item, such as a sentence with two live readings that nothing
@@ -446,6 +515,13 @@ Runs a function and binds output:
 ```metta
 (Compute + ($a $b) -> $sum)
 ```
+
+`clause-event` names the event of a sealed clause, the subject of its first
+atom, which a parser writes as the clause's own `(Member event class)`: the
+atom itself for a one-atom clause, the first conjunct of an `And`.
+`(Compute clause-event ((And (Member sk_open_1 open) (Agent sk_open_1 x))) -> $o)`
+binds `$o` to `sk_open_1`. A clause whose first atom is not a `Member` atom
+names no event, and the premise fails. See Bound-term conclusions.
 
 Implication inversion supports one restricted arithmetic subset. A top-level
 binary `Compute` using `+` or `-` may be reversed when its result is known and

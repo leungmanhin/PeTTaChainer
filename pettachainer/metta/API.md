@@ -128,6 +128,25 @@ for its own relation, rather than every variable-headed structural rule (which
 would match every same-arity goal via the `any` index bucket). This matters most
 for deep queries, where the per-node rule count compounds with search depth.
 
+A `Compute` premise whose function and arguments an instance's trigger facts
+ground is evaluated when the instance is compiled. Its value is bound in the
+instance, conclusion included, and the premise stays to check it when the
+instance fires; a computation without a value leaves no instance.
+
+### Bound-term conclusions
+
+A rule whose conclusion names a term that a premise binds — `$c`,
+`(And $c ...)`, `(Not $c)` or `(Not (And $c ...))` — specializes without any
+configuration. The first antecedent conjunct that mentions `$c` and that a
+stored fact can match is the trigger; each stored fact binding `$c` to an
+expression yields one instance whose conclusion splices the term's conjuncts in
+`$c`'s place. Its ordinary `And` projections then make every conjunct
+queryable, and the conclusion index keys them by the term's conjuncts, so a goal
+reaches the rule only through a stored term holding a conjunct that unifies
+with it. The Compute function `(clause-event $clause)` names a sealed clause's
+event, the subject of its first atom `(Member event class)`. Semantics and
+limits: LANGUAGE_SPEC.md, Bound-term conclusions.
+
 ## Runtime tuning
 
 | Function | Meaning |

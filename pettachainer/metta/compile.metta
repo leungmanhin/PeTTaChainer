@@ -2103,6 +2103,119 @@
       (cons $prem (rule-trigger-premises $rest))
       (rule-trigger-premises $rest)))
 
+;; --- Bound-term conclusions ------------------------------------------------
+;;
+;; A conclusion may name a whole term that a premise binds: the variable alone,
+;; an And holding it beside other atoms, or either form under Not.
+;;
+;;   (Implication
+;;      (And (Entails $m) (Theme $m $c) (Past $m)
+;;           (Compute clause-event ($c) -> $o))
+;;      (And $c (Past $o)))
+;;
+;; The term's conjuncts take the variable's place: with $c bound to
+;; `(And a b)` the rule concludes `(And a b (Past $o))`. Emitted as written,
+;; a rule concluding a variable would unify with every goal. The first
+;; antecedent conjunct a stored fact can match that mentions the variable is
+;; therefore a specialization trigger: each stored fact binding the variable to
+;; an expression yields one instance with the term spliced in. An instance
+;; concludes a concrete conjunction whose ordinary And projections index the
+;; conjuncts of that fact's term, so a goal reaches the rule only through a
+;; stored term holding a conjunct that unifies with it.
+
+(: bound-term (-[det]-> Atom Statement))
+
+(: headed? (-[det]-> Atom Atom Bool))
+(= (headed? $head $term)
+   (if (is-expr $term)
+      (if (== $term ()) false (== (car-atom $term) $head))
+      false))
+
+;; A bound term's variable is a whole conclusion side or one conjunct of an
+;; And side, under any Not.
+(: bound-term-slot-vars (-[det]-> Atom (List Variable)))
+(= (bound-term-slot-vars $consequent)
+   (if (headed? Not $consequent)
+      (let $inner (car-atom (cdr-atom $consequent))
+         (bound-term-slot-vars $inner))
+      (fold-flat collect-var-step ()
+         (implication-side-conjuncts (brand Statement $consequent)))))
+
+;; A premise binds a term when a stored fact can match it: a predicate, not a
+;; connective, a computation, or a binder.
+(: bound-term-binder? (-[det]-> Variable Atom Bool))
+(= (bound-term-binder? $var $premise)
+   (if (is-expr $premise)
+      (let $head (car-atom $premise)
+         (if (is-var $head) false
+            (if (compound-connective? $head) false
+               (if (source-computation-head? $head) false
+                  (if (or (== $head Implication) (== $head Exists)) false
+                     (compile-same-var-in-list? $var
+                        (extract-vars $premise)))))))
+      false))
+
+;; Add $var's trigger, the first premise that binds it.
+(: bound-term-trigger
+   (-[det]-> (List Atom) (List Atom) Variable (List Atom)))
+(= (bound-term-trigger () $triggers $_var) $triggers)
+(= (bound-term-trigger (cons $premise $rest) $triggers $var)
+   (if (bound-term-binder? $var $premise)
+      (cons $premise $triggers)
+      (bound-term-trigger $rest $triggers $var)))
+
+;; The stored template marks each slot as `(bound-term $var)`.
+(: mark-bound-term (-[det]-> Atom Atom))
+(= (mark-bound-term $conjunct)
+   (if (is-var $conjunct) (bound-term $conjunct) $conjunct))
+
+(: mark-bound-terms (-[det]-> Atom Atom))
+(= (mark-bound-terms $consequent)
+   (if (headed? Not $consequent)
+      (let $inner (car-atom (cdr-atom $consequent))
+         (Not (mark-bound-terms $inner)))
+      (seq2expr
+         (map-flat mark-bound-term
+            (implication-side-conjuncts (brand Statement $consequent))))))
+
+;; An instance splices each mark's term: the term's conjuncts join the other
+;; conjuncts of the side. A slot bound to anything but an expression leaves no
+;; instance.
+(: bound-term-conjuncts (-[semidet]-> Atom (List Atom)))
+(= (bound-term-conjuncts $conjunct)
+   (if (headed? bound-term $conjunct)
+      (let $term (car-atom (cdr-atom $conjunct))
+         (if (is-expr $term)
+            (implication-side-conjuncts (brand Statement $term))
+            (empty)))
+      (cons $conjunct ())))
+
+(: splice-bound-term (-[semidet]-> (List Atom) Atom (List Atom)))
+(= (splice-bound-term $conjuncts $conjunct)
+   (append $conjuncts (bound-term-conjuncts $conjunct)))
+
+(: splice-bound-terms (-[semidet]-> Statement Statement))
+(= (splice-bound-terms $conclusion)
+   (if (headed? Not $conclusion)
+      (brand Statement
+         (Not (splice-bound-terms
+                 (brand Statement (car-atom (cdr-atom $conclusion))))))
+      (brand Statement
+         (seq2expr
+            (fold-flat splice-bound-term ()
+               (implication-side-conjuncts $conclusion))))))
+
+;; Compute vocabulary for bound terms: the event a sealed clause is about. It
+;; is the subject of the clause's first atom, which the parser writes as the
+;; clause's own `(Member event class)`: the atom itself for a one-atom clause,
+;; the first conjunct of an And. Any other first atom names no event.
+(: clause-event (-[semidet]-> Atom Atom))
+(= (clause-event $clause)
+   (let $first (car-atom (implication-side-conjuncts (brand Statement $clause)))
+      (if (headed? Member $first)
+         (let (Member $event $_class) $first $event)
+         (empty))))
+
 (: fact-head (-[det]-> Statement Atom))
 (= (fact-head $type) (if (is-expr $type) (car-atom $type) $type))
 
@@ -2179,9 +2292,40 @@
       (let $trigger $candidate
          (ground-triggers $kb $rest $body))))
 
+;; Evaluate a Compute premise's function, as both chainers do for its CPU goal.
+(: cpu-call (-[nondet]-> Number $formula $arguments  $result))
+(= (cpu-call $_steps $fun $args) (reduce (reduce (cons $fun $args))))
+
+;; A Compute premise that the trigger facts make ground computes the same value
+;; whenever the instance fires. The instance binds it when compiled, before its
+;; bound terms are spliced, so the value indexes the conclusion: `clause-event`
+;; puts the clause's event into `(Past $o)`. The premise stays and checks the
+;; value when the instance fires; a computation without a value leaves no
+;; instance, and each of several values leaves its own.
+(: bind-ground-compute (-[nondet]-> Atom Atom Atom))
+(= (bind-ground-compute $antecedent $premise)
+   (if (headed? Compute $premise)
+      (let ($fun $args $result)
+         (case $premise (
+            ((Compute $f $a -> $r) (data $f $a $r))
+            ((Compute $f $a $r) (data $f $a $r))))
+         (if (== (extract-vars ($fun $args)) ())
+            (let $result (reduce (cpu-call 0 $fun $args)) $antecedent)
+            $antecedent))
+      $antecedent))
+
 (= (emit-specialization $kb
-      (compile-specialization (: $gprf $gtype $gtv)))
-   (let $gstmt (: $gprf $gtype $gtv)
+      (compile-specialization
+         (: $gprf (Implication $antecedent $consequent) $gtv)))
+   (let*
+      (($_bound
+          (fold-flat bind-ground-compute $antecedent
+             (implication-side-conjuncts (brand Statement $antecedent))))
+       ($gstmt
+          (: $gprf
+             (Implication $antecedent
+                (splice-bound-terms (brand Statement $consequent)))
+             $gtv)))
       (if (spec-done? $kb $gstmt) (empty)
          (let $_ (mark-spec-done! $kb $gstmt)
             (compile_ $kb $gstmt)))))
@@ -2333,13 +2477,21 @@
        (let* (($_exists-valid
                   (validate-explicit-exists-rule
                      $antecedent $consequent))
+               ($premises
+                  (implication-side-conjuncts
+                     (brand Statement $antecedent)))
                ($triggers
-                  (rule-trigger-premises
-                     (implication-side-conjuncts
-                        (brand Statement $antecedent)))))
+                  (list_to_set
+                     (fold-flat (bound-term-trigger $premises)
+                        (rule-trigger-premises $premises)
+                        (bound-term-slot-vars $consequent)))))
         (if (not (== $triggers ()))
          (specialize-rule-add $kb $triggers
-            (compile-specialization (: $prf $Type $tv)))
+            (compile-specialization
+               (: $prf
+                  (Implication $antecedent
+                     (mark-bound-terms $consequent))
+                  $tv)))
          (let*
             (($_evidence-reg (register-rule-evidence! $kb $prf))
              (($execs $proofs $atv)

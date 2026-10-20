@@ -138,6 +138,40 @@ direct expression for a singleton side and explicit `And` for a conjunction.
 Multiple conclusions must be one joint expression, for example
 `(And conclusion1 conclusion2)`.
 
+## Bound-Term Conclusions
+
+A conclusion may name a whole term that a predicate premise binds, such as a
+clause sealed under an event's `Theme`: the variable alone, an `And` holding it
+beside other atoms, or either form under `Not`:
+
+```metta
+(: theme_entailed_past
+    (Implication
+        (And (Entails $m) (Theme $m $c) (Past $m)
+             (Compute clause-event ($c) -> $o))
+        (And $c (Past $o)))
+    (CTV (STV 1.0 0.9) (STV 0.0 1.0)))
+
+(: theme_precluded_past
+    (Implication
+        (And (Precludes $m) (Theme $m $c) (Past $m)
+             (Compute clause-event ($c) -> $o))
+        (Not (And $c (Past $o))))
+    (CTV (STV 1.0 0.9) (STV 0.0 1.0)))
+```
+
+The term's conjuncts take the variable's place: with `$c` bound to
+`(And a b)` the first rule concludes `(And a b (Past e))`, and each of `a`, `b`
+and `(Past e)` is queryable on its own. A one-atom term concludes that atom.
+The `Not` forms conclude one negated conjunction, `(Not (And a b (Past e)))`,
+and nothing positive.
+
+The term must be bound by a predicate premise that stored facts match, here
+`(Theme $m $c)`: the rule applies to each stored fact binding the variable to
+an expression, and a goal reaches it only through such a stored term. Do not
+write one rule per clause size with a variable per conjunct; such rules unify
+with every goal and slow every query.
+
 ## Premise Helpers You Can Use
 
 ### Exists
@@ -196,6 +230,10 @@ their bound variables must not be reused in the conclusion.
 ```metta
 (Compute f (arg1 arg2 ...) -> $out)
 ```
+
+`(Compute clause-event ($c) -> $e)` binds `$e` to the event of the sealed
+clause `$c`: the subject of its first atom, the clause's own
+`(Member event class)`. Write that Member atom first in a sealed clause.
 
 For automatically invertible implications, use only a top-level binary `+` or
 `-` computation with a result bound by the consequent and exactly one unknown
